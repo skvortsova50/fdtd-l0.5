@@ -51,7 +51,6 @@ class FDTD1D:
         for t in range(self.T):
             self.step(t)
 
-
 N = 300
 T = 500
 
