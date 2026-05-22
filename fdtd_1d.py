@@ -1,117 +1,103 @@
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.animation as animation
 
 
 def gaussian_pulse(x, mean, sigma):
     return np.exp(-(x - mean) ** 2 / (2 * sigma ** 2))
 
 
-class FDTD1D_Maxwell:
-    """
-    1D FDTD (Yee):
-        dE/dt = (1/eps) dH/dx
-        dH/dt = (1/mu)  dE/dx
-    """
+class FDTD1D:
+    def __init__(self, N, time_steps, dx, dt, eps, mu,
+                 src_pos, probe_left, probe_right):
 
-    def __init__(self, x_dim, time_tot, c, dx, S,
-                 obs_probe, record_stop_time,
-                 eps=1.0, mu=1.0):
+        self.N = N
+        self.T = time_steps
 
-        self.x_dim = x_dim
-        self.time_tot = time_tot
-        self.c = c
         self.dx = dx
-        self.S = S
-        self.dt = S * dx / c
+        self.dt = dt
+
+        self.E = np.zeros(N)
+        self.H = np.zeros(N - 1)
 
         self.eps = eps
         self.mu = mu
 
-        # Поля (стагерена сітка Yee)
-        self.E = np.zeros(x_dim)
-        self.H = np.zeros(x_dim - 1)
+        self.src = src_pos
+        self.pl = probe_left
+        self.pr = probe_right
 
-        self.obs_probe = obs_probe
-        self.record_stop_time = record_stop_time
-        self.signal_obs = np.zeros(time_tot)
+        self.reflected = np.zeros(time_steps)
+        self.transmitted = np.zeros(time_steps)
 
-        self.t_step = 0
+    def step(self, t):
 
-    def step(self):
-        # --- Оновлення H (півкроку в просторі) ---
-        self.H[:] = self.H[:] + (self.dt / (self.mu * self.dx)) * \
-                    (self.E[1:] - self.E[:-1])
+        self.H += (self.dt / (self.mu[:-1] * self.dx)) * (
+            self.E[1:] - self.E[:-1]
+        )
 
-        # --- Оновлення E ---
-        self.E[1:-1] = self.E[1:-1] + (self.dt / (self.eps * self.dx)) * \
-                       (self.H[1:] - self.H[:-1])
+        self.E[1:-1] += (self.dt / (self.eps[1:-1] * self.dx)) * (
+            self.H[1:] - self.H[:-1]
+        )
 
-        # Граничні умови (ідеальні провідники)
-        self.E[0] = 0.0
-        self.E[-1] = 0.0
+        self.E[0] = self.E[1]
+        self.E[-1] = self.E[-2]
 
-        if self.t_step < self.record_stop_time:
-            self.signal_obs[self.t_step] = self.E[self.obs_probe]
+        self.E[self.src] = gaussian_pulse(t, 30, 8)
 
-        self.t_step += 1
+        self.reflected[t] = self.E[self.pl]
+        self.transmitted[t] = self.E[self.pr]
 
     def run(self):
-        for _ in range(self.time_tot):
-            self.step()
+        for t in range(self.T):
+            self.step(t)
 
 
-# --- Параметри моделювання ---
-x_dim = 200
-time_tot = 400
-c = 1.0
+N = 300
+T = 500
+
 dx = 1.0
-S = 0.99
+c = 1.0
+dt = 0.99 * dx / c
 
-source_pos = x_dim // 2
-obs_probe = int(0.75 * x_dim)
-record_stop_time = 100
+eps = np.ones(N)
+mu = np.ones(N)
 
-x = np.arange(0, x_dim, dx)
+i1, i2 = 120, 180
+eps[i1:i2] = 4.0
+mu[i1:i2] = 2.0
 
-# --- Початкове E поле (імпульс), H = 0 ---
-sigma_0 = 5
-E0 = gaussian_pulse(x, source_pos, sigma_0)
+src_pos = 60
+probe_left = 100
+probe_right = 220
 
-# --- Ініціалізація ---
-sim = FDTD1D_Maxwell(x_dim, time_tot, c, dx, S,
-                     obs_probe, record_stop_time)
+sim = FDTD1D(
+    N=N,
+    time_steps=T,
+    dx=dx,
+    dt=dt,
+    eps=eps,
+    mu=mu,
+    src_pos=60,
+    probe_left=100,
+    probe_right=220
+)
 
-sim.E[:] = E0
+sim.run()
 
+t = np.arange(T)
 
-# ============================================================
-#                      АНІМАЦІЯ
-# ============================================================
-
-fig, ax = plt.subplots()
-ax.set_xlim(0, x_dim)
-ax.set_ylim(-1.2, 1.2)
-ax.set_title("1D FDTD (Maxwell): E та H")
-ax.set_xlabel("x")
-ax.set_ylabel("Поле")
-
-lineE, = ax.plot([], [], lw=2, label="E")
-lineH, = ax.plot([], [], lw=2, linestyle="--", label="H")
-ax.legend()
-
-
-def update(frame):
-    sim.step()
-    lineE.set_data(np.arange(sim.x_dim), sim.E)
-    lineH.set_data(np.arange(sim.x_dim - 1) + 0.5, sim.H)
-    return lineE, lineH
-
-
-ani = animation.FuncAnimation(fig, update,
-                              frames=time_tot,
-                              interval=20,
-                              blit=True,
-                              repeat=False)
-
+plt.figure()
+plt.plot(t, sim.reflected)
+plt.plot(t, sim.transmitted)
+plt.xlabel("Time step")
+plt.ylabel("Amplitude")
+plt.legend(["Reflected", "Transmitted"])
+plt.grid()
 plt.show()
+
+A_ref = np.max(np.abs(sim.reflected))
+A_tr = np.max(np.abs(sim.transmitted))
+
+print("Max reflected amplitude:", A_ref)
+print("Max transmitted amplitude:", A_tr)
+print("R/T ratio:", A_ref / A_tr)
